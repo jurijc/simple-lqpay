@@ -202,7 +202,7 @@ function woocommerce_init() {
             $order = new WC_Order($order_id);
             return array(
                 'result'   => 'success',
-				'redirect' => add_query_arg('order', $order->id, add_query_arg('key', $order->order_key, get_permalink(wc_get_page_id('pay'))))
+		'redirect' => add_query_arg('order', $order->id, add_query_arg('key', $order->get_checkout_payment_url(true)))
             );
         }
 
@@ -255,35 +255,48 @@ function woocommerce_init() {
         function check_ipn_response() {
             global $woocommerce;
 
-            $success = isset($_POST['data']) && isset($_POST['signature']);
+            if ( isset( $_POST['data'] ) && isset( $_POST['signature'] ) ) {
 
-            if ($success) {
-                $data = $_POST['data'];
-                $parsed_data = json_decode(base64_decode($data));
-                $received_signature = $_POST['signature'];
-                $received_public_key = $parsed_data->public_key;
-                $order_id = $parsed_data->order_id;
-                $status = $parsed_data->status;
-                $sender_phone = $parsed_data->sender_phone;
-                $amount = $parsed_data->amount;
-                $currency = $parsed_data->currency;
-                $transaction_id = $parsed_data->transaction_id;
+                $data 			= $_POST['data'];
+                $parsed_data 		= json_decode(base64_decode($data));
+                $received_signature 	= $_POST['signature'];
+                $received_public_key 	= $parsed_data->public_key;
+                
+		$order_id 		= $parsed_data->order_id;
+                $status 		= $parsed_data->status;
+                $sender_phone 		= $parsed_data->sender_phone;
+                $amount 		= $parsed_data->amount;
+                $currency 		= $parsed_data->currency;
+                $transaction_id 	= $parsed_data->transaction_id;
 
-                $generated_signature = base64_encode(sha1($this->private_key . $data . $this->private_key, 1));
+                $generated_signature 	= base64_encode(sha1($this->private_key . $data . $this->private_key, 1));
 
                 if ($received_signature != $generated_signature || $this->public_key != $received_public_key) wp_die('IPN Request Failure');
 
                 $order = new WC_Order($order_id);
-
-                if ($status == 'success' || ($status == 'sandbox' && $this->sandbox == 'yes')) {
-                    $order->update_status($this->status, __('Заказ оплачен (оплата получена)', 'woocommerce'));
-                    $order->add_order_note(__('Клиент оплатил свой заказ', 'woocommerce'));
-                    $woocommerce->cart->empty_cart();
-                } else {
-                    $order->update_status('failed', __('Оплата не была получена', 'woocommerce'));
-                    wp_redirect($order->get_cancel_order_url());
-                    exit;
-                }
+		
+		    switch ($status) {
+                    case 'success':
+                        if ($this->status =='processing') $order->payment_complete();  		
+		   	else $order->update_status($this->status); //вибір з налаштувань плагіна, якщо інший ніж processing
+	   
+			$order->add_order_note(__('Заказ оплачен (оплата получена)', 'woocommerce'));	    
+                    	$woocommerce->cart->empty_cart();
+                        break;
+                    case 'sandbox':
+                        $order->update_status( 'completed', __( 'Тестовый платёж завершен', 'woocommerce' ) );
+			$woocommerce->cart->empty_cart();
+                        break;
+                    case 'error':
+                        $order->update_status( 'failed', __( 'Неуспешный платеж. Некорректно заполнены данные', 'woocommerce' ) );
+                        exit;
+			break;
+                    case 'failure':
+                        $order->update_status( 'failed', __('Оплата не была получена', 'woocommerce' ));
+                        exit;
+			break;
+                  }
+		                    
             } else {
                 wp_die('IPN Request Failure');
             }
